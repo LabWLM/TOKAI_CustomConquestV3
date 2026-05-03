@@ -525,6 +525,13 @@ function objectiveBgColorForTeam(teamValue: mod.Team, point: mod.CapturePoint): 
     return TEAM_2_BG();
 }
 
+function objectiveProgressColorForTeam(teamValue: mod.Team, point: mod.CapturePoint): mod.Vector {
+    const progressTeam = mod.GetOwnerProgressTeam(point);
+    if (mod.Equals(progressTeam, teamValue)) return TEAM_1_TEXT();
+    if (teamId(progressTeam) === NEUTRAL_TEAM_ID) return WHITE();
+    return TEAM_2_TEXT();
+}
+
 function updateTeamHud(teamValue: mod.Team): void {
     const friendly = getTeamScore(teamValue);
     const enemy = getTeamScore(otherTeam(teamValue));
@@ -548,15 +555,18 @@ function updateObjectiveHud(teamValue: mod.Team): void {
     for (let i = 0; i < total; i += 1) {
         const point = portalArrayValue<mod.CapturePoint>(points, i);
         const x = (i - (total - 1) / 2) * 50;
+        const progress = mod.GetCaptureProgress(point);
+        const progressName = objectiveWidgetName(teamValue, point, "Progress");
         setTextIfPresent(objectiveWidgetName(teamValue, point, "Text"), message(flagLetter(point)));
         setWidgetColorIfPresent(objectiveWidgetName(teamValue, point, "Text"), objectiveBgColorForTeam(teamValue, point));
         setTextColorIfPresent(objectiveWidgetName(teamValue, point, "Text"), objectiveTextColorForTeam(teamValue, point));
-        setWidgetColorIfPresent(objectiveWidgetName(teamValue, point, "Progress"), objectiveTextColorForTeam(teamValue, point));
+        setWidgetColorIfPresent(progressName, objectiveProgressColorForTeam(teamValue, point));
         setSizeAndPositionIfPresent(
-            objectiveWidgetName(teamValue, point, "Progress"),
-            mod.CreateVector(Math.max(2, Math.floor(30 * mod.GetCaptureProgress(point))), 5, 0),
+            progressName,
+            mod.CreateVector(Math.max(2, Math.floor(30 * progress)), 5, 0),
             mod.CreateVector(x, 122, 0),
         );
+        setVisibleIfPresent(progressName, progress > 0 && progress < 1);
     }
 }
 
@@ -572,6 +582,10 @@ function setTextColorIfPresent(name: string, color: mod.Vector): void {
 
 function setWidgetColorIfPresent(name: string, color: mod.Vector): void {
     if (mod.HasUIWidgetWithName(name)) mod.SetUIWidgetBgColor(find(name), color);
+}
+
+function setVisibleIfPresent(name: string, visible: boolean): void {
+    if (mod.HasUIWidgetWithName(name)) mod.SetUIWidgetVisible(find(name), visible);
 }
 
 function setSizeAndPositionIfPresent(name: string, size: mod.Vector, position: mod.Vector): void {
@@ -668,19 +682,9 @@ function bleedTickets(): void {
 
     if (team1Owned > team2Owned) {
         addTeamScore(team(TEAM_2_ID), -(team1Owned - team2Owned));
-        flashBleedingTeam(team(TEAM_2_ID));
     } else if (team2Owned > team1Owned) {
         addTeamScore(team(TEAM_1_ID), -(team2Owned - team1Owned));
-        flashBleedingTeam(team(TEAM_1_ID));
     }
-}
-
-function flashBleedingTeam(bleedingTeam: mod.Team): void {
-    const teamOneRoot = find(scoreRootName(team(TEAM_1_ID)));
-    const teamTwoRoot = find(scoreRootName(team(TEAM_2_ID)));
-    const name = widgetName(["ConquestBleedFlash", bleedingTeam, mod.GetMatchTimeElapsed()]);
-    addContainer(name, mod.CreateVector(0, 130, 0), mod.CreateVector(260, 8, 0), teamOneRoot, TEAM_2_TEXT(), 0.65, mod.UIBgFill.Solid, team(TEAM_1_ID));
-    addContainer(`${name}_2`, mod.CreateVector(0, 130, 0), mod.CreateVector(260, 8, 0), teamTwoRoot, TEAM_2_TEXT(), 0.65, mod.UIBgFill.Solid, team(TEAM_2_ID));
 }
 
 function maybeBleedTickets(): void {

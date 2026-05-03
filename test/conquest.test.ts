@@ -136,7 +136,7 @@ function setupPortalMock(): void {
             SetUIWidgetSize: vi.fn((widget: FakeWidget, size: mod.Vector) => {
                 widget.size = size;
             }) as unknown as typeof mod.SetUIWidgetSize,
-            SetUIWidgetVisible: (() => undefined) as typeof mod.SetUIWidgetVisible,
+            SetUIWidgetVisible: vi.fn(() => undefined) as unknown as typeof mod.SetUIWidgetVisible,
             SetUnspawnDelayInSeconds: (() => undefined) as typeof mod.SetUnspawnDelayInSeconds,
             SetVariable: ((variable: mod.Variable, value: unknown) => {
                 variables.set(String(variable), value);
@@ -264,5 +264,13 @@ describe("Conquest script", () => {
         OngoingCapturePoint(points[0] as unknown as mod.CapturePoint);
 
         expect(modMock.GetUIWidgetPosition).not.toHaveBeenCalled();
+    });
+
+    it("hides completed objective progress bars", () => {
+        OnGameModeStarted();
+
+        OngoingCapturePoint(points[0] as unknown as mod.CapturePoint);
+
+        expect(modMock.SetUIWidgetVisible).toHaveBeenCalledWith(expect.objectContaining({ name: "ConquestObjective_1_200_Progress" }), false);
     });
 });
