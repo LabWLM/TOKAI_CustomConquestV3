@@ -190,6 +190,10 @@ beforeEach(() => {
 });
 
 describe("Conquest script", () => {
+    it("includes scoreboard team names in the string table", () => {
+        expect(Object.values(stringkeys)).toEqual(expect.arrayContaining(["Team 1", "Team 2"]));
+    });
+
     it("sets up conquest rules, capture points, scoreboard, and HUD on game start", () => {
         OnGameModeStarted();
 

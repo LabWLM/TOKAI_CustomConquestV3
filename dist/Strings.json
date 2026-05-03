@@ -442,5 +442,7 @@
   "s440": "LOSING",
   "s441": "CONTESTED",
   "s442": "SECURED",
-  "s443": "AI_ObjectiveSpawn"
+  "s443": "AI_ObjectiveSpawn",
+  "s444": "Team 1",
+  "s445": "Team 2"
 }
