@@ -46,6 +46,17 @@ const CAPTURE_TICK_SOUND_INTERVAL = 10;
 const PLAYER_CAPTURE_HUD_INTERVAL_SECONDS = 0.1;
 const AI_ORDER_INTERVAL_SECONDS = 5;
 
+// Out of Bounds AreaTrigger ID layout.
+// 1100-1199: Team 2 restricted area, 1200-1299: Team 1 restricted area, 1300-1399: shared restricted area.
+const OOB_TEAM_2_START_ID = 1100;
+const OOB_TEAM_2_END_ID = 1200;
+const OOB_TEAM_1_START_ID = 1200;
+const OOB_TEAM_1_END_ID = 1300;
+const OOB_SHARED_START_ID = 1300;
+const OOB_SHARED_END_ID = 1400;
+const OOB_COUNTDOWN_SECONDS = 10;
+const OOB_SOUND_GLOBAL_SLOT = 31;
+
 // HUD colors. The first vector is text/bar color, the second is the background color.
 const TEAM_1_TEXT = () => mod.CreateVector(0, 0.8, 1);
 const TEAM_1_BG = () => mod.CreateVector(0, 0.2, 0.5);
@@ -230,7 +241,7 @@ const state: ConquestState = {
     lastTicketBleedTick: -1,
     lastHudTick: -1,
     lowMusicTriggered: false,
-    enableCustomAI: true,
+    enableCustomAI: false,
     enableTeamSwitching: true,
     enableVO: true,
     enableOOB: true,
@@ -324,6 +335,10 @@ function capturingVoGlobalVar(): mod.Variable {
 
 function tickSoundTakingGlobalVar(): mod.Variable {
     return mod.GlobalVariable(TICK_SOUND_TAKING_GLOBAL_SLOT);
+}
+
+function oobSoundGlobalVar(): mod.Variable {
+    return mod.GlobalVariable(OOB_SOUND_GLOBAL_SLOT);
 }
 
 function getTeamScore(teamValue: mod.Team): number {
@@ -653,6 +668,78 @@ function initializePlayerState(player: mod.Player): void {
     current.aiActionUntil = -1;
 }
 
+function isOOBTriggerForPlayer(player: mod.Player, trigger: mod.AreaTrigger): boolean {
+    if (!state.enableOOB) return false;
+    if (!mod.IsPlayerValid(player)) return false;
+    if (mod.GetSoldierState(player, mod.SoldierStateBool.IsAISoldier)) return false;
+
+    const triggerId = mod.GetObjId(trigger);
+    const playerTeamId = teamId(mod.GetTeam(player));
+
+    const isTeam2OOB = triggerId >= OOB_TEAM_2_START_ID && triggerId < OOB_TEAM_2_END_ID && playerTeamId === TEAM_2_ID;
+    const isTeam1OOB = triggerId >= OOB_TEAM_1_START_ID && triggerId < OOB_TEAM_1_END_ID && playerTeamId === TEAM_1_ID;
+    const isSharedOOB = triggerId >= OOB_SHARED_START_ID && triggerId < OOB_SHARED_END_ID;
+
+    return isTeam1OOB || isTeam2OOB || isSharedOOB;
+}
+
+function stopOOB(player: mod.Player): void {
+    const current = playerState(player);
+    if (!current.outOfBounds) return;
+
+    current.outOfBounds = false;
+    current.captureTick = -1;
+    mod.SkipManDown(player, false);
+    setPlayerOobVisible(player, false);
+}
+
+async function startOOB(player: mod.Player): Promise<void> {
+    if (mod.GetSoldierState(player, mod.SoldierStateBool.IsAISoldier)) return;
+    const current = playerState(player);
+
+    if (!state.enableOOB) return;
+    if (current.ignoreOOB) return;
+    if (current.outOfBounds) return;
+    if (!mod.IsPlayerValid(player)) return;
+    if (!mod.GetSoldierState(player, mod.SoldierStateBool.IsAlive)) return;
+
+    current.outOfBounds = true;
+    current.captureTick = OOB_COUNTDOWN_SECONDS;
+    mod.SkipManDown(player, true);
+
+    const isAI = mod.GetSoldierState(player, mod.SoldierStateBool.IsAISoldier);
+    if (!isAI) {
+        setPlayerOobVisible(player, true);
+    }
+
+    for (let tick = OOB_COUNTDOWN_SECONDS; tick > 0; tick -= 1) {
+        if (!current.outOfBounds) break;
+        if (!mod.IsPlayerValid(player)) break;
+        if (!mod.GetSoldierState(player, mod.SoldierStateBool.IsAlive)) break;
+
+        current.captureTick = tick;
+
+        if (!isAI) {
+            setTextIfPresent(playerHudWidget(player, "OOBCounter"), message("{}", tick));
+            mod.PlaySound(mod.GetVariable(oobSoundGlobalVar()), 0.7, player);
+        }
+
+        await mod.Wait(1);
+    }
+
+    if (current.outOfBounds && mod.IsPlayerValid(player) && mod.GetSoldierState(player, mod.SoldierStateBool.IsAlive)) {
+        mod.DealDamage(player, 10000, player);
+    }
+
+    current.outOfBounds = false;
+    current.captureTick = -1;
+    mod.SkipManDown(player, false);
+
+    if (!isAI) {
+        setPlayerOobVisible(player, false);
+    }
+}
+
 function setupScoreboard(): void {
     mod.SetScoreboardType(mod.ScoreboardType.CustomTwoTeams);
     mod.SetScoreboardColumnNames(
@@ -699,7 +786,6 @@ function createSharedHud(): void {
     mod.SetUIWidgetBgFill(root, mod.UIBgFill.None);
     mod.SetUIWidgetDepth(root, mod.UIDepth.AboveGameUI);
     addText("ConquestTimer", mod.CreateVector(0, 50, 0), mod.CreateVector(90, 30, 0), root, timeMessage(), 24, WHITE(), BLACK(), 0.8, mod.UIBgFill.Blur);
-    createObjectiveHud(root);
     updateSharedHud();
 }
 
@@ -743,61 +829,77 @@ function createTeamHud(teamValue: mod.Team): void {
     addContainer(widgetName(["ConquestBarBg", teamValue, "Enemy"]), mod.CreateVector(160, 60, 0), mod.CreateVector(200, 10, 0), root, TEAM_2_BG(), 0.8, mod.UIBgFill.Blur, teamValue);
     addContainer(widgetName(["ConquestBar", teamValue, "Friendly"]), mod.CreateVector(-260, 60, 0), mod.CreateVector(200, 10, 0), root, TEAM_1_TEXT(), 1, mod.UIBgFill.Solid, teamValue);
     addContainer(widgetName(["ConquestBar", teamValue, "Enemy"]), mod.CreateVector(260, 60, 0), mod.CreateVector(200, 10, 0), root, TEAM_2_TEXT(), 1, mod.UIBgFill.Solid, teamValue);
+    createObjectiveHud(root, teamValue);
     updateTeamHud(teamValue);
 }
 
-function createObjectiveHud(root: mod.UIWidget): void {
+function createObjectiveHud(root: mod.UIWidget, viewerTeam: mod.Team): void {
     const points = mod.AllCapturePoints();
     const total = Math.max(1, countPortalArray(points));
 
     for (let i = 0; i < total; i += 1) {
         const point = portalArrayValue<mod.CapturePoint>(points, i);
         const x = (i - (total - 1) / 2) * 50;
+
         addText(
-            objectiveWidgetName(point, "Text"),
+            objectiveWidgetName(point, "Text", viewerTeam),
             mod.CreateVector(x, 90, 0),
             mod.CreateVector(30, 30, 0),
             root,
             message(flagLetter(point)),
             24,
-            objectiveTextColor(point),
-            objectiveBgColor(point),
+            objectiveTextColor(point, viewerTeam),
+            objectiveBgColor(point, viewerTeam),
             0.8,
             mod.UIBgFill.Blur,
+            viewerTeam,
         );
+
         addText(
-            objectiveWidgetName(point, "Outline"),
+            objectiveWidgetName(point, "Outline", viewerTeam),
             mod.CreateVector(x, 90, 0),
             mod.CreateVector(30, 30, 0),
             root,
             message(""),
             24,
-            objectiveTextColor(point),
-            objectiveTextColor(point),
+            objectiveTextColor(point, viewerTeam),
+            objectiveTextColor(point, viewerTeam),
             1,
             mod.UIBgFill.OutlineThin,
+            viewerTeam,
         );
     }
 }
 
-function objectiveWidgetName(point: mod.CapturePoint, suffix: string): string {
+function objectiveWidgetName(point: mod.CapturePoint, suffix: string, viewerTeam?: mod.Team): string {
+    if (viewerTeam !== undefined) {
+        return widgetName(["ConquestObjective", viewerTeam, point, suffix]);
+    }
     return widgetName(["ConquestObjective", point, suffix]);
 }
 
-function objectiveTextColor(point: mod.CapturePoint): mod.Vector {
+function objectiveTextColor(point: mod.CapturePoint, viewerTeam?: mod.Team): mod.Vector {
     const owner = mod.GetCurrentOwnerTeam(point);
-    if (teamId(owner) === TEAM_1_ID) return TEAM_1_TEXT();
-    if (teamId(owner) === TEAM_2_ID) return TEAM_2_TEXT();
+
     if (teamId(owner) === NEUTRAL_TEAM_ID) return WHITE();
-    return WHITE();
+
+    if (viewerTeam !== undefined && mod.Equals(owner, viewerTeam)) {
+        return TEAM_1_TEXT(); // friendly = blue
+    }
+
+    return TEAM_2_TEXT(); // enemy = red
 }
 
-function objectiveBgColor(point: mod.CapturePoint): mod.Vector {
+function objectiveBgColor(point: mod.CapturePoint, viewerTeam?: mod.Team): mod.Vector {
     const owner = mod.GetCurrentOwnerTeam(point);
-    if (teamId(owner) === TEAM_1_ID) return TEAM_1_BG();
-    if (teamId(owner) === TEAM_2_ID) return TEAM_2_BG();
+
     if (teamId(owner) === NEUTRAL_TEAM_ID) return BLACK();
-    return BLACK();
+
+    if (viewerTeam !== undefined && mod.Equals(owner, viewerTeam)) {
+        return TEAM_1_BG(); // friendly = blue
+    }
+
+    return TEAM_2_BG(); // enemy = red
 }
 
 type ObjectiveHudAppearance = {
@@ -807,12 +909,12 @@ type ObjectiveHudAppearance = {
     textBgAlpha: number;
 };
 
-function objectiveHudAppearance(point: mod.CapturePoint): ObjectiveHudAppearance {
+function objectiveHudAppearance(point: mod.CapturePoint, viewerTeam?: mod.Team): ObjectiveHudAppearance {
     const isChanging = isCapturePointChanging(point);
     const sharedAlpha = isChanging ? objectiveFlashAlpha() : 1;
     return {
-        color: objectiveTextColor(point),
-        bgColor: objectiveBgColor(point),
+        color: objectiveTextColor(point, viewerTeam),
+        bgColor: objectiveBgColor(point, viewerTeam),
         alpha: sharedAlpha,
         textBgAlpha: isChanging ? sharedAlpha : 0.8,
     };
@@ -857,14 +959,16 @@ function updateObjectiveHud(): void {
 
     for (let i = 0; i < total; i += 1) {
         const point = portalArrayValue<mod.CapturePoint>(points, i);
-        updateObjectiveHudForPoint(point);
+        updateObjectiveHudForPoint(point, team(TEAM_1_ID));
+        updateObjectiveHudForPoint(point, team(TEAM_2_ID));
     }
 }
 
-function updateObjectiveHudForPoint(point: mod.CapturePoint): void {
-    const outlineName = objectiveWidgetName(point, "Outline");
-    const textName = objectiveWidgetName(point, "Text");
-    const appearance = objectiveHudAppearance(point);
+function updateObjectiveHudForPoint(point: mod.CapturePoint, viewerTeam?: mod.Team): void {
+    const outlineName = objectiveWidgetName(point, "Outline", viewerTeam);
+    const textName = objectiveWidgetName(point, "Text", viewerTeam);
+    const appearance = objectiveHudAppearance(point, viewerTeam);
+
     setTextIfPresent(textName, message(flagLetter(point)));
     setWidgetColorIfPresent(textName, appearance.bgColor);
     setTextColorIfPresent(textName, appearance.color);
@@ -972,6 +1076,10 @@ function setupCaptureSounds(): void {
         capturedSoundGlobalVar(),
         spawnSoundObject(mod.RuntimeSpawn_Common.SFX_UI_Gamemode_Shared_CaptureObjectives_OnCapturedByFriendly_OneShot2D),
     );
+    mod.SetVariable(
+        oobSoundGlobalVar(),
+        spawnSoundObject(mod.RuntimeSpawn_Common.SFX_UI_Gamemode_Shared_OutOfBounds_Countdown_OneShot2D),
+    );
     mod.SetVariable(capturepointFlashGlobalVar(), 1);
 }
 
@@ -997,7 +1105,7 @@ function initializeConquestState(): void {
     captureProgressHudByPoint.clear();
     state.initialized = true;
     state.gameOngoing = false;
-    state.enableCustomAI = true;
+    state.enableCustomAI = false;
     state.enableTeamSwitching = true;
     state.enableVO = true;
     state.enableOOB = true;
@@ -1222,6 +1330,7 @@ function createPlayerHud(player: mod.Player): void {
     addContainer(widgetName([rootName, "ObjectiveProgress"]), mod.CreateVector(-110, 200, 0), mod.CreateVector(2, 7, 0), root, WHITE(), 1, mod.UIBgFill.Solid, player);
     addText(widgetName([rootName, "OOBShade"]), mod.CreateVector(0, 0, 0), mod.CreateVector(5000, 5000, 0), root, message(""), 24, BLACK(), BLACK(), 0.9, mod.UIBgFill.Blur, player);
     addText(widgetName([rootName, "OOBText"]), mod.CreateVector(0, 470, 0), mod.CreateVector(420, 150, 0), root, message("Return To Combat"), 56, TEAM_2_TEXT(), TEAM_2_BG(), 0.8, mod.UIBgFill.Blur, player);
+    addText(widgetName([rootName, "OOBCounter"]), mod.CreateVector(0, 560, 0), mod.CreateVector(300, 90, 0), root, message(""), 72, TEAM_2_TEXT(), BLACK(), 0, mod.UIBgFill.None, player);
     setPlayerObjectiveVisible(player, false);
     setPlayerOobVisible(player, false);
 }
@@ -1238,7 +1347,7 @@ function setPlayerObjectiveVisible(player: mod.Player, visible: boolean): void {
 }
 
 function setPlayerOobVisible(player: mod.Player, visible: boolean): void {
-    for (const suffix of ["OOBShade", "OOBText"]) {
+    for (const suffix of ["OOBShade", "OOBText", "OOBCounter"]) {
         const name = playerHudWidget(player, suffix);
         if (mod.HasUIWidgetWithName(name)) mod.SetUIWidgetVisible(find(name), visible);
     }
@@ -1408,10 +1517,16 @@ function chooseNearestObjective(player: mod.Player): mod.CapturePoint {
 
 // Sends AI toward an objective after deploy, capture-point entry, vehicle exit, or move failure.
 function sendAIToObjective(player: mod.Player): void {
-    if (!mod.IsPlayerValid(player) || !mod.GetSoldierState(player, mod.SoldierStateBool.IsAISoldier)) return;
+    if (!mod.IsPlayerValid(player)) return;
+    if (!mod.GetSoldierState(player, mod.SoldierStateBool.IsAISoldier)) return;
+    if (!mod.GetSoldierState(player, mod.SoldierStateBool.IsAlive)) return;
     if (playerState(player).aiInAction) return;
+
     const objective = chooseNearestObjective(player);
+    if (objective === undefined) return;
+
     playerState(player).aiTarget = objective;
+
     mod.AISetMoveSpeed(player, mod.MoveSpeed.Sprint);
     mod.AIMoveToBehavior(player, mod.GetObjectPosition(objective));
 }
@@ -1460,9 +1575,11 @@ export function OnPlayerDeployed(eventPlayer: mod.Player): void {
     current.outOfBounds = false;
     current.currentCapturePointId = -1;
     current.captureTick = 0;
+    mod.SkipManDown(eventPlayer, false);
     setPlayerObjectiveVisible(eventPlayer, false);
+    setPlayerOobVisible(eventPlayer, false);
     if (state.givePlayersNVG) mod.AddEquipment(eventPlayer, mod.Gadgets.Mask_NVG);
-    sendAIToObjective(eventPlayer);
+    //sendAIToObjective(eventPlayer);
     if (mod.GetSoldierState(eventPlayer, mod.SoldierStateBool.IsAISoldier)) {
         mod.SetPlayerIncomingDamageFactor(eventPlayer, 0.5);
     }
@@ -1474,11 +1591,13 @@ export function OnPlayerDied(eventPlayer: mod.Player, eventOtherPlayer: mod.Play
     void _eventWeaponUnlock;
     if (!state.gameOngoing) return;
     const current = playerState(eventPlayer);
+    if (current.outOfBounds) stopOOB(eventPlayer);
     untrackPlayerFromCurrentPoint(eventPlayer);
     current.onPoint = false;
     current.currentCapturePointId = -1;
     current.captureTick = 0;
     setPlayerObjectiveVisible(eventPlayer, false);
+    setPlayerOobVisible(eventPlayer, false);
     addPlayerScore(eventPlayer, 0, PlayerVar.Deaths);
     addTeamScore(mod.GetTeam(eventPlayer), -1);
     if (mod.IsPlayerValid(eventOtherPlayer)) playerState(eventPlayer).aiTarget = eventOtherPlayer;
@@ -1573,10 +1692,13 @@ function startObjectiveHudLoop(point: mod.CapturePoint): void {
 
 async function runObjectiveHudLoop(point: mod.CapturePoint, pointId: number): Promise<void> {
     while (state.gameOngoing && isCapturePointChanging(point)) {
-        updateObjectiveHudForPoint(point);
+        updateObjectiveHudForPoint(point, team(TEAM_1_ID));
+        updateObjectiveHudForPoint(point, team(TEAM_2_ID));
         await mod.Wait(0.1);
     }
-    updateObjectiveHudForPoint(point);
+
+    updateObjectiveHudForPoint(point, team(TEAM_1_ID));
+    updateObjectiveHudForPoint(point, team(TEAM_2_ID));
     objectiveHudLoops.delete(pointId);
 }
 
@@ -1596,7 +1718,7 @@ export function OnPlayerEnterCapturePoint(eventPlayer: mod.Player, eventCaptureP
     setPlayerObjectiveVisible(eventPlayer, true);
     updatePlayerCaptureHud(eventPlayer, eventCapturePoint, pointOccupancy(eventCapturePoint), progressHud);
     startPlayerCaptureHudLoop(eventCapturePoint);
-    sendAIToObjective(eventPlayer);
+    //sendAIToObjective(eventPlayer);
 }
 
 // Portal event: hides the player capture HUD when leaving an objective.
@@ -1609,28 +1731,50 @@ export function OnPlayerExitCapturePoint(eventPlayer: mod.Player, _eventCaptureP
     setPlayerObjectiveVisible(eventPlayer, false);
 }
 
-// Portal event: optional team switching through interact points with IDs 1 and 2.
-export function OnPlayerInteract(eventPlayer: mod.Player, eventInteractPoint: mod.InteractPoint): void {
+// Portal event: optional team balancing through interact points 998 and 999.
+// UI update is left to Andy's original OngoingGlobal HUD loop.
+export function OnPlayerInteract(eventPlayer: mod.Player, eventInteractPoint: any): void {
     if (!state.enableTeamSwitching) return;
+
     const id = mod.GetObjId(eventInteractPoint);
-    if (id === TEAM_1_ID) mod.SetTeam(eventPlayer, team(TEAM_1_ID));
-    if (id === TEAM_2_ID) mod.SetTeam(eventPlayer, team(TEAM_2_ID));
+    const playerTeamId = teamId(mod.GetTeam(eventPlayer));
+
+    // 998:
+    // Team1 is losing.
+    // Only Team2 players can move to Team1.
+    if (
+        id === 998 &&
+        state.team1Score < state.team2Score &&
+        playerTeamId === TEAM_2_ID
+    ) {
+        mod.SetTeam(eventPlayer, team(TEAM_1_ID));
+        return;
+    }
+
+    // 999:
+    // Team2 is losing.
+    // Only Team1 players can move to Team2.
+    if (
+        id === 999 &&
+        state.team2Score < state.team1Score &&
+        playerTeamId === TEAM_1_ID
+    ) {
+        mod.SetTeam(eventPlayer, team(TEAM_2_ID));
+        return;
+    }
 }
 
-// Portal event: shows the out-of-bounds warning UI when enabled.
-export function OnPlayerEnterAreaTrigger(eventPlayer: mod.Player, _eventAreaTrigger: mod.AreaTrigger): void {
-    void _eventAreaTrigger;
-    const current = playerState(eventPlayer);
-    if (!state.enableOOB || current.ignoreOOB) return;
-    current.outOfBounds = true;
-    setPlayerOobVisible(eventPlayer, true);
+// Portal event: starts OOB when the player enters a restricted AreaTrigger.
+export function OnPlayerEnterAreaTrigger(eventPlayer: mod.Player, eventAreaTrigger: mod.AreaTrigger): void {
+    if (mod.GetSoldierState(eventPlayer, mod.SoldierStateBool.IsAISoldier)) return;
+    if (!isOOBTriggerForPlayer(eventPlayer, eventAreaTrigger)) return;
+    void startOOB(eventPlayer);
 }
 
-// Portal event: hides the out-of-bounds warning UI.
-export function OnPlayerExitAreaTrigger(eventPlayer: mod.Player, _eventAreaTrigger: mod.AreaTrigger): void {
-    void _eventAreaTrigger;
-    playerState(eventPlayer).outOfBounds = false;
-    setPlayerOobVisible(eventPlayer, false);
+// Portal event: cancels OOB when the player exits the restricted AreaTrigger.
+export function OnPlayerExitAreaTrigger(eventPlayer: mod.Player, eventAreaTrigger: mod.AreaTrigger): void {
+    if (!isOOBTriggerForPlayer(eventPlayer, eventAreaTrigger)) return;
+    stopOOB(eventPlayer);
 }
 
 // Portal event: makes damaged AI focus the attacker.
