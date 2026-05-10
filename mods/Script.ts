@@ -998,10 +998,6 @@ function setWidgetAlphaIfPresent(name: string, alpha: number): void {
     if (mod.HasUIWidgetWithName(name)) mod.SetUIWidgetBgAlpha(find(name), alpha);
 }
 
-function setVisibleIfPresent(name: string, visible: boolean): void {
-    if (mod.HasUIWidgetWithName(name)) mod.SetUIWidgetVisible(find(name), visible);
-}
-
 function setSizeAndPositionIfPresent(name: string, size: mod.Vector, position: mod.Vector): void {
     if (!mod.HasUIWidgetWithName(name)) return;
     const widget = find(name);
@@ -1512,10 +1508,6 @@ function sendAIToObjective(player: mod.Player): void {
 
     mod.AISetMoveSpeed(player, mod.MoveSpeed.Sprint);
     mod.AIMoveToBehavior(player, mod.GetObjectPosition(objective));
-}
-
-function isActiveAI(player: mod.Player): boolean {
-    return mod.IsPlayerValid(player) && mod.GetSoldierState(player, mod.SoldierStateBool.IsAISoldier) && mod.GetSoldierState(player, mod.SoldierStateBool.IsAlive);
 }
 
 // Conquest Assault support: defenders lose when team 2 owns no objectives.
