@@ -5,8 +5,6 @@ const TEAM_1_ID = 1;
 const TEAM_2_ID = 2;
 const NEUTRAL_TEAM_ID = 0;
 
-const TEST = 1000;
-
 // Object ID layout used by the original visual script.
 // Capture points are expected to start at 200: A=200, B=201, C=202, and so on.
 const CAPTURE_POINT_BASE_ID = 200;
@@ -788,6 +786,7 @@ function createSharedHud(): void {
     mod.SetUIWidgetBgFill(root, mod.UIBgFill.None);
     mod.SetUIWidgetDepth(root, mod.UIDepth.AboveGameUI);
     addText("ConquestTimer", mod.CreateVector(0, 50, 0), mod.CreateVector(90, 30, 0), root, timeMessage(), 24, WHITE(), BLACK(), 0.8, mod.UIBgFill.Blur);
+    createObjectiveHud(root);
     updateSharedHud();
 }
 
@@ -831,77 +830,61 @@ function createTeamHud(teamValue: mod.Team): void {
     addContainer(widgetName(["ConquestBarBg", teamValue, "Enemy"]), mod.CreateVector(160, 60, 0), mod.CreateVector(200, 10, 0), root, TEAM_2_BG(), 0.8, mod.UIBgFill.Blur, teamValue);
     addContainer(widgetName(["ConquestBar", teamValue, "Friendly"]), mod.CreateVector(-260, 60, 0), mod.CreateVector(200, 10, 0), root, TEAM_1_TEXT(), 1, mod.UIBgFill.Solid, teamValue);
     addContainer(widgetName(["ConquestBar", teamValue, "Enemy"]), mod.CreateVector(260, 60, 0), mod.CreateVector(200, 10, 0), root, TEAM_2_TEXT(), 1, mod.UIBgFill.Solid, teamValue);
-    createObjectiveHud(root, teamValue);
     updateTeamHud(teamValue);
 }
 
-function createObjectiveHud(root: mod.UIWidget, viewerTeam: mod.Team): void {
+function createObjectiveHud(root: mod.UIWidget): void {
     const points = mod.AllCapturePoints();
     const total = Math.max(1, countPortalArray(points));
 
     for (let i = 0; i < total; i += 1) {
         const point = portalArrayValue<mod.CapturePoint>(points, i);
         const x = (i - (total - 1) / 2) * 50;
-
         addText(
-            objectiveWidgetName(point, "Text", viewerTeam),
+            objectiveWidgetName(point, "Text"),
             mod.CreateVector(x, 90, 0),
             mod.CreateVector(30, 30, 0),
             root,
             message(flagLetter(point)),
             24,
-            objectiveTextColor(point, viewerTeam),
-            objectiveBgColor(point, viewerTeam),
+            objectiveTextColor(point),
+            objectiveBgColor(point),
             0.8,
             mod.UIBgFill.Blur,
-            viewerTeam,
         );
-
         addText(
-            objectiveWidgetName(point, "Outline", viewerTeam),
+            objectiveWidgetName(point, "Outline"),
             mod.CreateVector(x, 90, 0),
             mod.CreateVector(30, 30, 0),
             root,
             message(""),
             24,
-            objectiveTextColor(point, viewerTeam),
-            objectiveTextColor(point, viewerTeam),
+            objectiveTextColor(point),
+            objectiveTextColor(point),
             1,
             mod.UIBgFill.OutlineThin,
-            viewerTeam,
         );
     }
 }
 
-function objectiveWidgetName(point: mod.CapturePoint, suffix: string, viewerTeam?: mod.Team): string {
-    if (viewerTeam !== undefined) {
-        return widgetName(["ConquestObjective", viewerTeam, point, suffix]);
-    }
+function objectiveWidgetName(point: mod.CapturePoint, suffix: string): string {
     return widgetName(["ConquestObjective", point, suffix]);
 }
 
-function objectiveTextColor(point: mod.CapturePoint, viewerTeam?: mod.Team): mod.Vector {
+function objectiveTextColor(point: mod.CapturePoint): mod.Vector {
     const owner = mod.GetCurrentOwnerTeam(point);
-
+    if (teamId(owner) === TEAM_1_ID) return TEAM_1_TEXT();
+    if (teamId(owner) === TEAM_2_ID) return TEAM_2_TEXT();
     if (teamId(owner) === NEUTRAL_TEAM_ID) return WHITE();
-
-    if (viewerTeam !== undefined && mod.Equals(owner, viewerTeam)) {
-        return TEAM_1_TEXT(); // friendly = blue
-    }
-
-    return TEAM_2_TEXT(); // enemy = red
+    return WHITE();
 }
 
-function objectiveBgColor(point: mod.CapturePoint, viewerTeam?: mod.Team): mod.Vector {
+function objectiveBgColor(point: mod.CapturePoint): mod.Vector {
     const owner = mod.GetCurrentOwnerTeam(point);
-
+    if (teamId(owner) === TEAM_1_ID) return TEAM_1_BG();
+    if (teamId(owner) === TEAM_2_ID) return TEAM_2_BG();
     if (teamId(owner) === NEUTRAL_TEAM_ID) return BLACK();
-
-    if (viewerTeam !== undefined && mod.Equals(owner, viewerTeam)) {
-        return TEAM_1_BG(); // friendly = blue
-    }
-
-    return TEAM_2_BG(); // enemy = red
+    return BLACK();
 }
 
 type ObjectiveHudAppearance = {
@@ -911,12 +894,12 @@ type ObjectiveHudAppearance = {
     textBgAlpha: number;
 };
 
-function objectiveHudAppearance(point: mod.CapturePoint, viewerTeam?: mod.Team): ObjectiveHudAppearance {
+function objectiveHudAppearance(point: mod.CapturePoint): ObjectiveHudAppearance {
     const isChanging = isCapturePointChanging(point);
     const sharedAlpha = isChanging ? objectiveFlashAlpha() : 1;
     return {
-        color: objectiveTextColor(point, viewerTeam),
-        bgColor: objectiveBgColor(point, viewerTeam),
+        color: objectiveTextColor(point),
+        bgColor: objectiveBgColor(point),
         alpha: sharedAlpha,
         textBgAlpha: isChanging ? sharedAlpha : 0.8,
     };
@@ -961,16 +944,14 @@ function updateObjectiveHud(): void {
 
     for (let i = 0; i < total; i += 1) {
         const point = portalArrayValue<mod.CapturePoint>(points, i);
-        updateObjectiveHudForPoint(point, team(TEAM_1_ID));
-        updateObjectiveHudForPoint(point, team(TEAM_2_ID));
+        updateObjectiveHudForPoint(point);
     }
 }
 
-function updateObjectiveHudForPoint(point: mod.CapturePoint, viewerTeam?: mod.Team): void {
-    const outlineName = objectiveWidgetName(point, "Outline", viewerTeam);
-    const textName = objectiveWidgetName(point, "Text", viewerTeam);
-    const appearance = objectiveHudAppearance(point, viewerTeam);
-
+function updateObjectiveHudForPoint(point: mod.CapturePoint): void {
+    const outlineName = objectiveWidgetName(point, "Outline");
+    const textName = objectiveWidgetName(point, "Text");
+    const appearance = objectiveHudAppearance(point);
     setTextIfPresent(textName, message(flagLetter(point)));
     setWidgetColorIfPresent(textName, appearance.bgColor);
     setTextColorIfPresent(textName, appearance.color);
@@ -1694,13 +1675,10 @@ function startObjectiveHudLoop(point: mod.CapturePoint): void {
 
 async function runObjectiveHudLoop(point: mod.CapturePoint, pointId: number): Promise<void> {
     while (state.gameOngoing && isCapturePointChanging(point)) {
-        updateObjectiveHudForPoint(point, team(TEAM_1_ID));
-        updateObjectiveHudForPoint(point, team(TEAM_2_ID));
+        updateObjectiveHudForPoint(point);
         await mod.Wait(0.1);
     }
-
-    updateObjectiveHudForPoint(point, team(TEAM_1_ID));
-    updateObjectiveHudForPoint(point, team(TEAM_2_ID));
+    updateObjectiveHudForPoint(point);
     objectiveHudLoops.delete(pointId);
 }
 
@@ -1733,35 +1711,34 @@ export function OnPlayerExitCapturePoint(eventPlayer: mod.Player, _eventCaptureP
     setPlayerObjectiveVisible(eventPlayer, false);
 }
 
-// Portal event: optional team balancing through interact points 998 and 999.
-// UI update is left to Andy's original OngoingGlobal HUD loop.
-export function OnPlayerInteract(eventPlayer: mod.Player, eventInteractPoint: any): void {
+// Portal event: optional team balancing through interact points 998 and 999. only active win to loose
+export function OnPlayerInteract(eventPlayer: mod.Player, eventInteractPoint: mod.InteractPoint): void {
     if (!state.enableTeamSwitching) return;
 
     const id = mod.GetObjId(eventInteractPoint);
     const playerTeamId = teamId(mod.GetTeam(eventPlayer));
 
-    // 998:
-    // Team1 is losing.
-    // Only Team2 players can move to Team1.
+    // Team1 loosing：
+    // if use InteractPoint 998 team2,move Team1
     if (
         id === 998 &&
-        state.team1Score < state.team2Score &&
+        getTeamScore(team(TEAM_1_ID)) < getTeamScore(team(TEAM_2_ID)) &&
         playerTeamId === TEAM_2_ID
     ) {
         mod.SetTeam(eventPlayer, team(TEAM_1_ID));
+        updateAllHud();
         return;
     }
 
-    // 999:
-    // Team2 is losing.
-    // Only Team1 players can move to Team2.
+    // Team2 loosing：
+    // if use InteractPoint 999 team1, move teame2
     if (
         id === 999 &&
-        state.team2Score < state.team1Score &&
+        getTeamScore(team(TEAM_2_ID)) < getTeamScore(team(TEAM_1_ID)) &&
         playerTeamId === TEAM_1_ID
     ) {
         mod.SetTeam(eventPlayer, team(TEAM_2_ID));
+        updateAllHud();
         return;
     }
 }
