@@ -1718,6 +1718,7 @@ export function OnPlayerInteract(eventPlayer: mod.Player, eventInteractPoint: mo
         playerTeamId === TEAM_2_ID
     ) {
         mod.SetTeam(eventPlayer, team(TEAM_1_ID));
+        mod.ForceManDown(eventPlayer);
         updateAllHud();
         return;
     }
@@ -1730,6 +1731,7 @@ export function OnPlayerInteract(eventPlayer: mod.Player, eventInteractPoint: mo
         playerTeamId === TEAM_1_ID
     ) {
         mod.SetTeam(eventPlayer, team(TEAM_2_ID));
+        mod.ForceManDown(eventPlayer);
         updateAllHud();
         return;
     }
