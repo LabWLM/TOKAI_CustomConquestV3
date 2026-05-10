@@ -34,6 +34,7 @@ const FLAG_CAPTURE_TIME_SECONDS = 15;
 const FLAG_NEUTRAL_TIME_SECONDS = 20;
 // Custom AI is disabled by default because Portal can throw OutOfAISpawnQuota when the server already has AI.
 const MAX_CUSTOM_AI = 36;
+const MAX_RECON_DRONES_PER_SQUAD = 1;
 // Scoreboard column index used for sorting. Column 1 is Score.
 const SCOREBOARD_SORT_COLUMN = 1;
 const CAPTUREPOINT_FLASH_GLOBAL_SLOT = 24;
@@ -466,6 +467,32 @@ function countPortalArray(array: mod.Array): number {
 
 function portalArrayValue<T>(array: mod.Array, index: number): T {
     return modlib.ConvertArray(array)[index] as T;
+}
+
+function countSquadReconDroneUsers(player: mod.Player): number {
+    const squad = mod.GetSquad(player);
+    const players = mod.AllPlayers();
+    let count = 0;
+
+    for (let i = 0; i < countPortalArray(players); i += 1) {
+        const other = portalArrayValue<mod.Player>(players, i);
+        if (
+            mod.IsPlayerValid(other) &&
+            mod.Equals(mod.GetSquad(other), squad) &&
+            mod.HasEquipment(other, mod.Gadgets.Deployable_Recon_Drone)
+        ) {
+            count += 1;
+        }
+    }
+
+    return count;
+}
+
+function enforceSquadReconDroneLimit(player: mod.Player): void {
+    if (!mod.HasEquipment(player, mod.Gadgets.Deployable_Recon_Drone)) return;
+    if (countSquadReconDroneUsers(player) <= MAX_RECON_DRONES_PER_SQUAD) return;
+
+    mod.RemoveEquipment(player, mod.Gadgets.Deployable_Recon_Drone);
 }
 
 // Counts objectives owned by a team. Ticket bleed is based on this value.
@@ -1553,6 +1580,7 @@ export function OnPlayerDeployed(eventPlayer: mod.Player): void {
     mod.SkipManDown(eventPlayer, false);
     setPlayerObjectiveVisible(eventPlayer, false);
     setPlayerOobVisible(eventPlayer, false);
+    enforceSquadReconDroneLimit(eventPlayer);
     if (state.givePlayersNVG) mod.AddEquipment(eventPlayer, mod.Gadgets.Mask_NVG);
     //sendAIToObjective(eventPlayer);
     if (mod.GetSoldierState(eventPlayer, mod.SoldierStateBool.IsAISoldier)) {
