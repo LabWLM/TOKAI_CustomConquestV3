@@ -34,6 +34,8 @@ const FLAG_CAPTURE_TIME_SECONDS = 15;
 const FLAG_NEUTRAL_TIME_SECONDS = 20;
 // Custom AI is disabled by default because Portal can throw OutOfAISpawnQuota when the server already has AI.
 const MAX_CUSTOM_AI = 36;
+
+//DroneLimited
 const MAX_RECON_DRONES_PER_SQUAD = 1;
 // Scoreboard column index used for sorting. Column 1 is Score.
 const SCOREBOARD_SORT_COLUMN = 1;
@@ -469,6 +471,8 @@ function portalArrayValue<T>(array: mod.Array, index: number): T {
     return modlib.ConvertArray(array)[index] as T;
 }
 
+
+//DroneLimited
 function countSquadReconDroneUsers(player: mod.Player): number {
     const squad = mod.GetSquad(player);
     const players = mod.AllPlayers();
@@ -487,6 +491,7 @@ function countSquadReconDroneUsers(player: mod.Player): number {
 
     return count;
 }
+
 
 function enforceSquadReconDroneLimit(player: mod.Player): void {
     if (!mod.HasEquipment(player, mod.Gadgets.Deployable_Recon_Drone)) return;
@@ -1580,6 +1585,8 @@ export function OnPlayerDeployed(eventPlayer: mod.Player): void {
     mod.SkipManDown(eventPlayer, false);
     setPlayerObjectiveVisible(eventPlayer, false);
     setPlayerOobVisible(eventPlayer, false);
+    
+    //DroneLimited
     enforceSquadReconDroneLimit(eventPlayer);
     if (state.givePlayersNVG) mod.AddEquipment(eventPlayer, mod.Gadgets.Mask_NVG);
     //sendAIToObjective(eventPlayer);
